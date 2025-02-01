@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+        <!-- Prevent browser caching -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Image Zoom & Video</title>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
@@ -22,6 +26,7 @@
     
     <a href="/">Reload Page</a><br/>
     <a href="static/assets/app.txt">The App</a><br/>
+      <a href="{{ url_for('upload_mp4_video') }}" class="refresh-button">Upload mp4</a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
     <input type="file" id="image-upload" accept="image/*">
     <br>
     <img id="uploaded-image" style="display:none;">

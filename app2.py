@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
+#!/mnt/HDD500/QuickZoom/env/bin/python
+from flask import Flask, render_template, request, jsonify, send_from_directory, send_file, make_response, redirect, url_for
 import os
 import cv2
 import numpy as np
@@ -9,9 +10,17 @@ from moviepy.editor import (
     AudioFileClip, ImageSequenceClip
 )
 from moviepy.editor import ImageSequenceClip
+from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
 import glob
 import random
 import shutil
+import base64   
+import io
+import numpy as np
+import subprocess
+import json
+import datetime
+from icecream import ic
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/upload/'
@@ -182,6 +191,406 @@ def create_zoom_video(image_path, points, zoom_level, output_video):
 @app.route('/video/<filename>')
 def video(filename):
     return send_from_directory(VIDEO_FOLDER, filename)
+#-------------------------
 
+# Path to the uploads and output folders
+UPLOAD_FOLDER = 'static/uploads/'
+OUTPUT_FOLDER = 'static/uploads/'
+
+@app.route('/video_edit')
+def video_edit():
+    return render_template('video_edit.html')
+
+@app.route('/trim-video', methods=['POST'])
+def trim_video():
+    start_time = float(request.form['startTime'])
+    end_time = float(request.form['endTime'])
+    input_video = 'static/use.mp4'
+    output_video = 'static/bash_vids/trimmed_video.mp4'
+
+    try:
+        # Log the trimming process
+        ic(f"Trimming video from {start_time} to {end_time}")
+         
+        # Use MoviePy to trim the video
+        ffmpeg_extract_subclip(input_video, start_time, end_time, targetname=output_video)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        print(f"Error trimming video: {str(e)}")
+        return f"Error: {str(e)}", 500
+@app.route('/reverse_video', methods=['POST', 'GET'])
+def reverse_video():
+    try:
+        # Define paths
+        input_video = 'static/video_resources/forward.mp4'
+        temp_dir = 'static/temp/'
+        final_output_dir = 'static/video_history/'
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(final_output_dir, exist_ok=True)
+
+        # Step 1: Slow down the input video
+        slow_video = os.path.join(temp_dir, 'slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', input_video,
+            '-filter:v', 'scale=512x768,setpts=2.0*PTS',
+            '-an', '-y', slow_video
+        ], check=True)
+
+        # Step 2: Reverse the slowed video
+        reverse_slow_video = os.path.join(temp_dir, 'reverse_slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', slow_video,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', reverse_slow_video
+        ], check=True)
+
+        # Step 3: Concatenate slow and reverse videos
+        joined = os.path.join(temp_dir, 'joined.mp4')
+        with open(os.path.join(temp_dir, 'file_list1.txt'), 'w') as f:
+            f.write(f"file '{slow_video[12:]}'\nfile '{reverse_slow_video[12:]}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list1.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', joined
+        ], check=True)
+
+        # Step 4: Reverse the concatenated video
+        joined_reverse = os.path.join(temp_dir, 'joined_reverse.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', joined,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', joined_reverse
+        ], check=True)
+
+        # Step 5: Concatenate joined and reversed joined videos
+        final = os.path.join(temp_dir, 'final.mp4')
+        with open(os.path.join(temp_dir, 'file_list2.txt'), 'w') as f:
+            f.write(f"file '{joined[12:]}'\nfile '{joined_reverse[12:]}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list2.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', final
+        ], check=True)
+
+        # Step 6: Add a border overlay
+        border_image = 'static/assets/512x768.png'
+        final_with_border = os.path.join(temp_dir, 'final_with_border.mp4')
+        if os.path.exists(border_image):
+            subprocess.run([
+                'ffmpeg', '-hide_banner', '-i', final, '-i', border_image,
+                '-filter_complex', "[1:v]scale=iw:ih[border];[0:v][border]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto",
+                '-c:a', 'copy', '-y', final_with_border
+            ], check=True)
+        else:
+            raise FileNotFoundError(f"Border file '{border_image}' not found!")
+
+        # Step 7: Add background music to the video with no sound
+        music_files = [os.path.join('static/music/', f) for f in os.listdir('static/music/') if f.endswith('.mp3')]
+        if not music_files:
+            raise FileNotFoundError("No background music files found in the specified directory!")
+        music_file = random.choice(music_files)
+        final_temp = os.path.join(temp_dir, 'FINAL_TEMP.mp4')
+
+        # Add background music to the video (no existing audio in the video)
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_with_border, '-i', music_file,
+            '-filter_complex', "[1:a]volume=0.5[a1]",  # Adjust volume of the music
+            '-map', '0:v', '-map', '[a1]', '-shortest', '-c:v', 'copy', '-y', final_temp
+        ], check=True)
+
+
+        # Step 8: Save the final video with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        final_filename = os.path.join(final_output_dir, f'{timestamp}_FINAL.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_temp,
+            '-g', '48', '-keyint_min', '48', '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', final_filename
+        ], check=True)
+
+        # Cleanup intermediate files
+        intermediate_files = [slow_video, reverse_slow_video, joined, joined_reverse, final, final_with_border, final_temp]
+        for file in intermediate_files:
+            if os.path.exists(file):
+                os.remove(file)
+        src =final_filename
+        dest ='static/use.mp4'
+        shutil.copy(src, dest)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+@app.route('/reverse_videom', methods=['POST', 'GET'])
+def reverse_videom():
+    try:
+        # Define paths
+        input_video = 'static/video_resources/forward.mp4'
+        temp_dir = 'static/temp/'
+        final_output_dir = 'static/video_history/'
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(final_output_dir, exist_ok=True)
+
+        # Step 1: Slow down the input video
+        slow_video = os.path.join(temp_dir, 'slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', input_video,
+            '-filter:v', 'scale=512x820,setpts=2.0*PTS',
+            '-an', '-y', slow_video
+        ], check=True)
+
+        # Step 2: Reverse the slowed video
+        reverse_slow_video = os.path.join(temp_dir, 'reverse_slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', slow_video,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', reverse_slow_video
+        ], check=True)
+
+        # Step 3: Concatenate slow and reverse videos
+        joined = os.path.join(temp_dir, 'joined.mp4')
+        with open(os.path.join(temp_dir, 'file_list1.txt'), 'w') as f:
+            f.write(f"file '{slow_video}'\nfile '{reverse_slow_video}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list1.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', joined
+        ], check=True)
+
+        # Step 4: Reverse the concatenated video
+        joined_reverse = os.path.join(temp_dir, 'joined_reverse.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', joined,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', joined_reverse
+        ], check=True)
+
+        # Step 5: Concatenate joined and reversed joined videos
+        final = os.path.join(temp_dir, 'final.mp4')
+        with open(os.path.join(temp_dir, 'file_list2.txt'), 'w') as f:
+            f.write(f"file '{joined}'\nfile '{joined_reverse}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list2.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', final
+        ], check=True)
+
+        # Step 6: Add a border overlay
+        border_image = 'static/assets/512x820.png'
+        final_with_border = os.path.join(temp_dir, 'final_with_border.mp4')
+        if os.path.exists(border_image):
+            subprocess.run([
+                'ffmpeg', '-hide_banner', '-i', final, '-i', border_image,
+                '-filter_complex', "[1:v]scale=iw:ih[border];[0:v][border]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto",
+                '-c:a', 'copy', '-y', final_with_border
+            ], check=True)
+        else:
+            raise FileNotFoundError(f"Border file '{border_image}' not found!")
+
+        # Step 7: Add background music to the video with no sound
+        music_files = [os.path.join('static/music/', f) for f in os.listdir('static/music/') if f.endswith('.mp3')]
+        if not music_files:
+            raise FileNotFoundError("No background music files found in the specified directory!")
+        music_file = random.choice(music_files)
+        final_temp = os.path.join(temp_dir, 'FINAL_TEMP.mp4')
+
+        # Add background music to the video (no existing audio in the video)
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_with_border, '-i', music_file,
+            '-filter_complex', "[1:a]volume=0.7[a1]",  # Adjust volume of the music
+            '-map', '0:v', '-map', '[a1]', '-shortest', '-c:v', 'copy', '-y', final_temp
+        ], check=True)
+
+
+        # Step 8: Save the final video with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        final_filename = os.path.join(final_output_dir, f'{timestamp}_FINAL.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_temp,
+            '-g', '48', '-keyint_min', '48', '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', final_filename
+        ], check=True)
+
+        # Cleanup intermediate files
+        intermediate_files = [slow_video, reverse_slow_video, joined, joined_reverse, final, final_with_border, final_temp]
+        for file in intermediate_files:
+            if os.path.exists(file):
+                os.remove(file)
+        src =final_filename
+        dest ='static/use.mp4'
+        shutil.copy(src, dest)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+
+
+@app.route('/reverse_videos', methods=['POST', 'GET'])
+def reverse_videos():
+    try:
+        # Define paths
+        input_video = 'static/video_resources/forward.mp4'
+        temp_dir = 'static/temp/'
+        final_output_dir = 'static/video_history/'
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(final_output_dir, exist_ok=True)
+
+        # Step 1: Slow down the input video
+        slow_video = os.path.join(temp_dir, 'slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', input_video,
+            '-filter:v', 'scale=512x700,setpts=2.0*PTS',
+            '-an', '-y', slow_video
+        ], check=True)
+
+        # Step 2: Reverse the slowed video
+        reverse_slow_video = os.path.join(temp_dir, 'reverse_slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', slow_video,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', reverse_slow_video
+        ], check=True)
+
+        # Step 3: Concatenate slow and reverse videos
+        joined = os.path.join(temp_dir, 'joined.mp4')
+        with open(os.path.join(temp_dir, 'file_list1.txt'), 'w') as f:
+            f.write(f"file '{slow_video}'\nfile '{reverse_slow_video}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list1.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', joined
+        ], check=True)
+
+        # Step 4: Reverse the concatenated video
+        joined_reverse = os.path.join(temp_dir, 'joined_reverse.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', joined,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', joined_reverse
+        ], check=True)
+
+        # Step 5: Concatenate joined and reversed joined videos
+        final = os.path.join(temp_dir, 'final.mp4')
+        with open(os.path.join(temp_dir, 'file_list2.txt'), 'w') as f:
+            f.write(f"file '{joined}'\nfile '{joined_reverse}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list2.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', final
+        ], check=True)
+
+        # Step 6: Add a border overlay
+        border_image = 'static/assets/512x700.png'
+        final_with_border = os.path.join(temp_dir, 'final_with_border.mp4')
+        if os.path.exists(border_image):
+            subprocess.run([
+                'ffmpeg', '-hide_banner', '-i', final, '-i', border_image,
+                '-filter_complex', "[1:v]scale=iw:ih[border];[0:v][border]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto",
+                '-c:a', 'copy', '-y', final_with_border
+            ], check=True)
+        else:
+            raise FileNotFoundError(f"Border file '{border_image}' not found!")
+
+        # Step 7: Add background music to the video with no sound
+        music_files = [os.path.join('static/music/', f) for f in os.listdir('static/music/') if f.endswith('.mp3')]
+        if not music_files:
+            raise FileNotFoundError("No background music files found in the specified directory!")
+        music_file = random.choice(music_files)
+        final_temp = os.path.join(temp_dir, 'FINAL_TEMP.mp4')
+
+        # Add background music to the video (no existing audio in the video)
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_with_border, '-i', music_file,
+            '-filter_complex', "[1:a]volume=0.7[a1]",  # Adjust volume of the music
+            '-map', '0:v', '-map', '[a1]', '-shortest', '-c:v', 'copy', '-y', final_temp
+        ], check=True)
+
+
+        # Step 8: Save the final video with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        final_filename = os.path.join(final_output_dir, f'{timestamp}_FINAL.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_temp,
+            '-g', '48', '-keyint_min', '48', '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', final_filename
+        ], check=True)
+
+        # Cleanup intermediate files
+        intermediate_files = [slow_video, reverse_slow_video, joined, joined_reverse, final, final_with_border, final_temp]
+        for file in intermediate_files:
+            if os.path.exists(file):
+                os.remove(file)
+        src =final_filename
+        dest ='static/use.mp4'
+        shutil.copy(src, dest)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+
+@app.route('/upload_mp4_video')
+def upload_mp4_video():
+    return render_template('upload_mp4.html')
+@app.route('/upload_mp4', methods=['POST'])
+def upload_mp4():
+    uploaded_file = request.files['videoFile']
+    if uploaded_file.filename != '':
+        # Save the uploaded file to a directory or process it as needed
+        # For example, you can save it to a specific directory:
+        uploaded_file.save('static/video_resources/forward.mp4')
+        #                   /' + uploaded_file.filename)
+        VIDEO='static/video_resources/forward.mp4'
+        #use a uuid and copy 'to static/video_history'
+        shutil.copy('static/video_resources/forward.mp4', 'static/video_history/' + str(uuid.uuid4()) + '.mp4')
+        return render_template('upload_mp4.html',VIDEO=VIDEO)
+    else:
+        VIDEO='static/video_resources/forward.mp4'
+        return render_template('upload_mp4.html',VIDEO=VIDEO)
+@app.route('/get_videos', methods=['GET', 'POST'])
+def get_videos():
+    video_files = glob.glob("static/video_history/*.mp4")
+    video_files = sorted(video_files, key=os.path.getmtime, reverse=True)
+    return render_template("get_videos.html", video_files=video_files)
+
+@app.route('/delete_videos', methods=['POST'])
+def delete_videos():
+    videos_to_delete = request.form.getlist('videos_to_delete')  # Get selected videos
+
+    if not videos_to_delete:
+        flash("No videos selected for deletion.", "warning")
+        return redirect(url_for('get_videos'))
+
+    for video_path in videos_to_delete:
+        try:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+                print(f"Deleted: {video_path}")  # Debugging log
+            else:
+                print(f"File not found: {video_path}")
+        except Exception as e:
+            print(f"Error deleting {video_path}: {str(e)}")
+
+    flash(f"Deleted {len(videos_to_delete)} video(s).", "success")
+    return redirect(url_for('get_videos'))   
+
+# Define path for videos and temp export
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

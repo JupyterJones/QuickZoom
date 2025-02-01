@@ -1,567 +1,33 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
+#!/mnt/HDD500/QuickZoom/env/bin/python
+from flask import Flask, render_template, request, jsonify, send_from_directory, send_file, make_response, redirect, url_for
 import os
 import cv2
 import numpy as np
-import moviepy.editor as mpy
-
-app = Flask(__name__)
-UPLOAD_FOLDER = 'static/upload/'
-VIDEO_FOLDER = 'static/videos/'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(VIDEO_FOLDER, exist_ok=True)
-
-# Route to serve uploaded images
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No file uploaded'})
-    file = request.files['image']
-    filepath = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(filepath)
-    return jsonify({'filepath': filepath})
-
-@app.route('/process', methods=['POST'])
-def process():
-    data = request.json
-    image_path = data['image_path']
-    points = data['points']
-    zoom_level = float(data['zoom'])  # Convert zoom_level to float
-    
-    output_video = os.path.join(VIDEO_FOLDER, 'zoom_animation.mp4')
-    create_zoom_video(image_path, points, zoom_level, output_video)
-    return jsonify({'video_path': output_video})
-
-# Function to create zoom effect
-
-def create_zoom_video(image_path, points, zoom_level, output_video):
-    img = cv2.imread(image_path)
-    h, w, _ = img.shape
-    frames = []
-    num_frames = 60
-    
-    for i in range(num_frames):
-        alpha = i / num_frames
-        zoom_factor = 1 + alpha * zoom_level
-        point = points[i % len(points)]
-        cx, cy = int(point[0] * w), int(point[1] * h)
-        
-        # Define the cropping region
-        x1 = max(cx - int(w / (2 * zoom_factor)), 0)
-        y1 = max(cy - int(h / (2 * zoom_factor)), 0)
-        x2 = min(cx + int(w / (2 * zoom_factor)), w)
-        y2 = min(cy + int(h / (2 * zoom_factor)), h)
-        cropped = img[y1:y2, x1:x2]
-        resized = cv2.resize(cropped, (w, h))
-        frames.append(resized)
-    
-    # Save as video
-    video = mpy.ImageSequenceClip([cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames], fps=30)
-    video.write_videofile(output_video, codec='libx264')
-
-@app.route('/video/<filename>')
-def video(filename):
-    return send_from_directory(VIDEO_FOLDER, filename)
-
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5100)
---------- index.html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Zoom & Video</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <style>
-        img { max-width: 100%; cursor: crosshair; }
-        #video-container { display: none; }
-    </style>
-</head>
-<body>
-    <h1>Upload an Image</h1>
-    <input type="file" id="image-upload" accept="image/*">
-    <br><br>
-    <img id="uploaded-image" style="display:none;">
-    <br>
-    <label>Zoom Level: <input type="range" id="zoom-level" min="1" max="5" step="0.1" value="2"></label>
-    <br>
-    <button id="generate-video">Generate Zoom Video</button>
-    <br><br>
-    <div id="video-container">
-        <h2>Generated Video</h2>
-        <video id="zoom-video" controls></video>
-    </div>
-    
-    <script>
-        let imagePath = "";
-        let points = [];
-
-        $('#image-upload').on('change', function(event) {
-            let file = event.target.files[0];
-            let formData = new FormData();
-            formData.append('image', file);
-            
-            $.ajax({
-                url: '/upload',
-                type: 'POST',
-                data: formData,
-                processData: false,
-                contentType: false,
-                success: function(response) {
-                    imagePath = response.filepath;
-                    $('#uploaded-image').attr('src', imagePath).show();
-                    points = [];
-                }
-            });
-        });
-
-        $('#uploaded-image').on('click', function(event) {
-            if (points.length < 3) {
-                let imgOffset = $(this).offset();
-                let x = (event.pageX - imgOffset.left) / $(this).width();
-                let y = (event.pageY - imgOffset.top) / $(this).height();
-                points.push([x, y]);
-            }
-        });
-
-        $('#generate-video').on('click', function() {
-            if (points.length < 3 || !imagePath) {
-                alert('Please select three points on the image.');
-                return;
-            }
-            
-            let zoom = $('#zoom-level').val();
-            
-            $.ajax({
-                url: '/process',
-                type: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({ image_path: imagePath, points: points, zoom: zoom }),
-                success: function(response) {
-                    $('#zoom-video').attr('src', response.video_path);
-                    $('#video-container').show();
-                }
-            });
-        });
-    </script>
-</body>
-</html>
----------------------- i want to alter this to zooming in on only one point clicked
-ChatGPT said:
-ChatGPT
-
-To modify your existing code to focus on zooming in on just one selected point (instead of three), you need to make a few key adjustments:
-
-    Limit the number of points to 1: Since you want to focus on only one point, the frontend code should allow the user to select just one point.
-
-    Change the backend to handle only one point: The backend code needs to be updated to process the zoom effect based on a single point instead of multiple points.
-
-Here's how you can adjust your existing code:
-1. Update the Frontend (index.html)
-
-In the frontend code, change the logic to store only one point and send it to the server.
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Zoom & Video</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <style>
-        img { max-width: 100%; cursor: crosshair; }
-        #video-container { display: none; }
-    </style>
-</head>
-<body>
-    <h1>Upload an Image</h1>
-    <input type="file" id="image-upload" accept="image/*">
-    <br><br>
-    <img id="uploaded-image" style="display:none;">
-    <br>
-    <label>Zoom Level: <input type="range" id="zoom-level" min="1" max="5" step="0.1" value="2"></label>
-    <br>
-    <button id="generate-video">Generate Zoom Video</button>
-    <br><br>
-    <div id="video-container">
-        <h2>Generated Video</h2>
-        <video id="zoom-video" controls></video>
-    </div>
-    
-    <script>
-        let imagePath = "";
-        let point = null;  // Store only one point
-
-        $('#image-upload').on('change', function(event) {
-            let file = event.target.files[0];
-            let formData = new FormData();
-            formData.append('image', file);
-            
-            $.ajax({
-                url: '/upload',
-                type: 'POST',
-                data: formData,
-                processData: false,
-                contentType: false,
-                success: function(response) {
-                    imagePath = response.filepath;
-                    $('#uploaded-image').attr('src', imagePath).show();
-                    point = null;  // Reset point selection when a new image is uploaded
-                }
-            });
-        });
-
-        $('#uploaded-image').on('click', function(event) {
-            if (!point) {  // Allow only one point selection
-                let imgOffset = $(this).offset();
-                let x = (event.pageX - imgOffset.left) / $(this).width();
-                let y = (event.pageY - imgOffset.top) / $(this).height();
-                point = [x, y];  // Store the selected point
-            }
-        });
-
-        $('#generate-video').on('click', function() {
-            if (!point || !imagePath) {
-                alert('Please select a point on the image.');
-                return;
-            }
-            
-            let zoom = $('#zoom-level').val();
-            
-            $.ajax({
-                url: '/process',
-                type: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({ image_path: imagePath, points: [point], zoom: zoom }),  // Send only one point
-                success: function(response) {
-                    $('#zoom-video').attr('src', response.video_path);
-                    $('#video-container').show();
-                }
-            });
-        });
-    </script>
-</body>
-</html>
-
-2. Update the Backend (app.py)
-
-Now, you need to adjust the backend to handle the zoom effect on only one point instead of multiple points. Modify the create_zoom_video function to zoom in on just the first point in the list.
-
-from flask import Flask, render_template, request, jsonify, send_from_directory
-import os
-import cv2
-import numpy as np
-import moviepy.editor as mpy
-
-app = Flask(__name__)
-UPLOAD_FOLDER = 'static/upload/'
-VIDEO_FOLDER = 'static/videos/'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(VIDEO_FOLDER, exist_ok=True)
-
-# Route to serve uploaded images
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No file uploaded'})
-    file = request.files['image']
-    filepath = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(filepath)
-    return jsonify({'filepath': filepath})
-
-@app.route('/process', methods=['POST'])
-def process():
-    data = request.json
-    image_path = data['image_path']
-    points = data['points']
-    zoom_level = float(data['zoom'])  # Convert zoom_level to float
-    
-    output_video = os.path.join(VIDEO_FOLDER, 'zoom_animation.mp4')
-    create_zoom_video(image_path, points, zoom_level, output_video)
-    return jsonify({'video_path': output_video})
-
-# Function to create zoom effect on a single point
-
-def create_zoom_video(image_path, points, zoom_level, output_video):
-    img = cv2.imread(image_path)
-    h, w, _ = img.shape
-    frames = []
-    num_frames = 60
-    
-    # Only using the first point
-    point = points[0]
-    cx, cy = int(point[0] * w), int(point[1] * h)
-    
-    for i in range(num_frames):
-        alpha = i / num_frames
-        zoom_factor = 1 + alpha * zoom_level
-        
-        # Define the cropping region
-        x1 = max(cx - int(w / (2 * zoom_factor)), 0)
-        y1 = max(cy - int(h / (2 * zoom_factor)), 0)
-        x2 = min(cx + int(w / (2 * zoom_factor)), w)
-        y2 = min(cy + int(h / (2 * zoom_factor)), h)
-        cropped = img[y1:y2, x1:x2]
-        resized = cv2.resize(cropped, (w, h))
-        frames.append(resized)
-    
-    # Save as video
-    video = mpy.ImageSequenceClip([cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames], fps=30)
-    video.write_videofile(output_video, codec='libx264')
-
-@app.route('/video/<filename>')
-def video(filename):
-    return send_from_directory(VIDEO_FOLDER, filename)
-
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5100)
-
-Key Changes:
-
-    Frontend: Changed the points array to store only one point.
-    Backend: Adjusted the logic in create_zoom_video to use only the first point from the points list.
-
-Now, users can select only one point on the image, and the zoom effect will focus on that single point. The rest of the logic remains the same for uploading the image, processing it, and generating the zoom video.
-You said:
-is there a way to slightly sharpen every few frames
-ChatGPT said:
-ChatGPT
-
-Yes, you can apply sharpening to every few frames in your video. One way to do this is by using a kernel (a matrix) to sharpen the image in the create_zoom_video function. You can apply this sharpening effect periodically (e.g., every 5 frames) to add variation and improve the perceived sharpness during zooming.
-
-Here’s how you can modify the backend to sharpen every few frames:
-1. Define a Sharpening Kernel
-
-A kernel is a matrix used to apply various effects like blurring, sharpening, etc. A simple sharpening kernel looks like this:
-
-sharpening_kernel = np.array([[0, -1, 0],
-                               [-1, 5,-1],
-                               [0, -1, 0]])
-
-This kernel will enhance the contrast between neighboring pixels and sharpen the image.
-2. Apply Sharpening to Every Few Frames
-
-You can apply this kernel to every few frames in the create_zoom_video function using cv2.filter2D(). Here's how you can modify the function to sharpen every 5th frame (you can adjust the interval as needed):
-Updated create_zoom_video Function:
-
-def create_zoom_video(image_path, points, zoom_level, output_video):
-    img = cv2.imread(image_path)
-    h, w, _ = img.shape
-    frames = []
-    num_frames = 60
-    
-    # Only using the first point
-    point = points[0]
-    cx, cy = int(point[0] * w), int(point[1] * h)
-    
-    # Define the sharpening kernel
-    sharpening_kernel = np.array([[0, -1, 0],
-                                  [-1, 5,-1],
-                                  [0, -1, 0]])
-
-    for i in range(num_frames):
-        alpha = i / num_frames
-        zoom_factor = 1 + alpha * zoom_level
-        
-        # Define the cropping region
-        x1 = max(cx - int(w / (2 * zoom_factor)), 0)
-        y1 = max(cy - int(h / (2 * zoom_factor)), 0)
-        x2 = min(cx + int(w / (2 * zoom_factor)), w)
-        y2 = min(cy + int(h / (2 * zoom_factor)), h)
-        cropped = img[y1:y2, x1:x2]
-        resized = cv2.resize(cropped, (w, h))
-        
-        # Apply sharpening to every 5th frame
-        if i % 5 == 0:  # Sharpen every 5th frame (adjust as needed)
-            resized = cv2.filter2D(resized, -1, sharpening_kernel)
-        
-        frames.append(resized)
-    
-    # Save as video
-    video = mpy.ImageSequenceClip([cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames], fps=30)
-    video.write_videofile(output_video, codec='libx264')
-
-Explanation of Changes:
-
-    Sharpening Kernel: The sharpening kernel is defined as a 3x3 matrix that is applied to each frame to enhance its sharpness.
-    Frame Interval: The condition if i % 5 == 0: ensures that the sharpening effect is applied to every 5th frame. You can adjust this number to apply sharpening more or less frequently.
-    cv2.filter2D(): This function applies the kernel to the image, modifying the pixel values based on the kernel matrix. It sharpens the image by increasing the contrast around edges.
-
-Optional: Customizing the Sharpening Interval
-
-If you want to sharpen frames at different intervals, you can modify the condition in the loop. For example, you could sharpen frames every 3rd frame by changing i % 5 == 0 to i % 3 == 0.
-
-With this setup, every few frames (e.g., every 5th frame), the image will be sharpened before it is added to the final video.
-You said:
-how can i slow down the zoom 
-ChatGPT said:
-ChatGPT
-
-To slow down the zoom effect, you need to adjust the rate at which the zooming occurs in the video. Currently, the zooming effect is controlled by the alpha value, which increases linearly over the number of frames. By slowing down the zoom, you can decrease the rate at which alpha increases, resulting in a slower zoom effect.
-Ways to Slow Down the Zoom:
-
-    Reduce the Zoom Speed by Modifying alpha You can reduce the speed of the zoom by decreasing the increase rate of alpha. This will cause the zoom factor to change more slowly over time.
-
-    Increase the Number of Frames for Smoother Zoom Increasing the number of frames can also make the zoom appear slower because there are more frames to interpolate the zoom effect.
-
-Example Modifications to Slow Down the Zoom:
-1. Slower Zoom by Reducing alpha Increment
-
-In the current create_zoom_video function, the alpha is calculated as i / num_frames. You can introduce a "slow down factor" to reduce how quickly alpha increases.
-Updated create_zoom_video with Slower Zoom:
-
-def create_zoom_video(image_path, points, zoom_level, output_video, slowdown_factor=2):
-    img = cv2.imread(image_path)
-    h, w, _ = img.shape
-    frames = []
-    num_frames = 60 * slowdown_factor  # Increase the number of frames for slower zoom
-    
-    # Only using the first point
-    point = points[0]
-    cx, cy = int(point[0] * w), int(point[1] * h)
-    
-    # Define the sharpening kernel
-    sharpening_kernel = np.array([[0, -1, 0],
-                                  [-1, 5,-1],
-                                  [0, -1, 0]])
-
-    for i in range(num_frames):
-        # Slow down the zoom by adjusting alpha
-        alpha = (i / slowdown_factor) / num_frames  # Slow down the zoom by dividing alpha by slowdown_factor
-        zoom_factor = 1 + alpha * zoom_level
-        
-        # Define the cropping region
-        x1 = max(cx - int(w / (2 * zoom_factor)), 0)
-        y1 = max(cy - int(h / (2 * zoom_factor)), 0)
-        x2 = min(cx + int(w / (2 * zoom_factor)), w)
-        y2 = min(cy + int(h / (2 * zoom_factor)), h)
-        cropped = img[y1:y2, x1:x2]
-        resized = cv2.resize(cropped, (w, h))
-        
-        # Apply sharpening to every 5th frame
-        if i % 5 == 0:  # Sharpen every 5th frame (adjust as needed)
-            resized = cv2.filter2D(resized, -1, sharpening_kernel)
-        
-        frames.append(resized)
-    
-    # Save as video
-    video = mpy.ImageSequenceClip([cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames], fps=30)
-    video.write_videofile(output_video, codec='libx264')
-
-Key Changes:
-
-    Slow Down Factor:
-        The slowdown_factor variable is added to control the zoom speed. The default value is set to 2, meaning the zoom effect will occur more slowly. You can adjust this factor to control how slow the zoom should be.
-        The number of frames is also multiplied by the slowdown_factor, which increases the total number of frames for the zoom, making the effect slower.
-        alpha is divided by the slowdown_factor to reduce the rate of zoom per frame.
-
-    num_frames Adjustment:
-        To make the zoom slower, the total number of frames (num_frames) is increased based on the slowdown_factor. This creates more intermediate frames, making the zoom appear slower.
-
-2. More Gradual Zoom
-
-If you want a more gradual zoom effect that starts slow and then speeds up a bit (or vice versa), you could use a non-linear curve for alpha instead of a linear one. A quadratic or cubic curve could make the zoom start slowly and then speed up, or the reverse.
-Example of Quadratic Zoom (Starts Slow, Ends Fast):
-
-alpha = (i / num_frames) ** 2  # This makes the zoom slower at the start and faster at the end
-
-With these changes, the zoom will occur more slowly, and the effect can be adjusted by changing the slowdown_factor. You can experiment with different values for slowdown_factor and the alpha formula to get the exact zoom effect you want.
-You said:
-if i size the image for viewing on the page will it effect the point of zoom ?
-ChatGPT said:
-ChatGPT
-
-Yes, resizing the image for viewing on the webpage can affect the point of zoom, especially if the image is scaled down for display. The coordinates where the user clicks to select the zoom points are based on the displayed size of the image, not the actual original size of the image.
-Explanation:
-
-    Image Display Size: When you display the image in HTML, you may scale it down using CSS (e.g., using max-width: 100% to fit the image to the screen). This makes the image smaller on the page for better viewing, but the actual dimensions of the image don't change. The image's width and height remain the same on the server side, while the displayed size on the page may be smaller.
-
-    Zoom Coordinates: The user clicks on the displayed image, and those coordinates (in percentage terms) are calculated based on the scaled size of the image on the webpage, not the original image size. This mismatch can lead to an incorrect point of zoom when you use these coordinates to crop the image for zooming.
-
-Solution: Adjust Coordinates Based on the Image Display Size
-
-To fix this issue, you'll need to adjust the coordinates to account for the scaling when the image is displayed on the webpage. When the user clicks on the image, the click coordinates must be scaled back to the original image dimensions before applying the zoom effect.
-
-Here’s how you can handle this:
-1. Capture the Scaled Dimensions of the Image
-
-When you load the image, capture both the displayed dimensions (the CSS size) and the original dimensions (the image file size).
-2. Adjust Click Coordinates
-
-When the user clicks on the image, convert the clicked position (relative to the displayed image) to the corresponding position in the original image based on the scaling factor.
-Changes in Your Code:
-Adjusting Click Coordinates in the Frontend (JavaScript)
-
-$('#uploaded-image').on('click', function(event) {
-    if (points.length < 3) {
-        let imgOffset = $(this).offset();
-        let imgWidth = $(this).width();
-        let imgHeight = $(this).height();
-        
-        // Get the click coordinates relative to the displayed image
-        let x = (event.pageX - imgOffset.left) / imgWidth;
-        let y = (event.pageY - imgOffset.top) / imgHeight;
-        
-        // Store the coordinates relative to the original image dimensions
-        points.push([x, y]);
-    }
-});
-
-Adjusting Coordinates in the Backend (Python)
-
-On the backend, when you perform the zoom, you should scale the coordinates back to the original image dimensions using the following formula:
-
-# Convert the relative click coordinates to the original image's pixel coordinates
-original_width = w  # Original image width
-original_height = h  # Original image height
-
-# Adjust the clicked point based on the original image dimensions
-cx, cy = int(x * original_width), int(y * original_height)
-
-Full Code Adjustments:
-
-Here’s a step-by-step summary of the necessary changes:
-
-    Frontend (HTML/JavaScript): When the user clicks on the image, calculate the coordinates as a percentage of the displayed image size (x and y values in terms of 0-1).
-
-    Backend (Python): Convert these percentage-based coordinates back to the original image size before performing the zoom.
-
-Why This Works:
-
-    The click coordinates are always based on the visible image size (the CSS size), but the zoom effect is applied to the original image size. By scaling the click coordinates back to the original size, you ensure that the zoom happens at the correct location, even if the image is resized for display.
-
-Let me know if you need any more details or adjustments to this solution!
-
------------------ current app.py -----------------
-from flask import Flask, render_template, request, jsonify, send_from_directory
-import os
-import cv2
-import numpy as np
-import moviepy.editor as mpy
-from moviepy.video.compositing.transitions import slide_in
-from moviepy.video.fx import all
-from moviepy.editor import *
+import uuid
+from PIL import Image
+from moviepy.editor import (
+    VideoFileClip, ImageClip, ColorClip, CompositeVideoClip,
+    AudioFileClip, ImageSequenceClip
+)
+from moviepy.editor import ImageSequenceClip
+from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
 import glob
 import random
-from PIL import Image
-import cv2
-import os
-import uuid
 import shutil
-from sys import argv
+import base64   
+import io
+import numpy as np
+import subprocess
+import json
+import datetime
+from icecream import ic
+
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/upload/'
 VIDEO_FOLDER = 'static/videos/'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
+os.makedirs('static/vids', exist_ok=True)
 def add_title_image(video_path, hex_color = "#A52A2A"):
     hex_color=random.choice(["#A52A2A","#ad1f1f","#16765c","#7a4111","#9b1050","#8e215d","#2656ca"])
     # Define the directory path
@@ -645,7 +111,7 @@ def add_title_image(video_path, hex_color = "#A52A2A"):
     output_path = f'static/videos/final_output3{uid}.mp4'
     # Export the final video with the background music
     composite_clip.write_videofile(output_path)
-    mp4_file =  f"/mnt/HDD500/collections/vids/Ready_Post_{uid}.mp4"
+    mp4_file =  f"static/vids/Ready_Post_{uid}.mp4"
     shutil.copyfile(output_path, mp4_file) 
     temp_vid="static/videos/temp.mp4"
     shutil.copyfile(output_path, temp_vid)    
@@ -717,7 +183,7 @@ def create_zoom_video(image_path, points, zoom_level, output_video):
         frames.append(resized)
     
     # Save as video
-    video = mpy.ImageSequenceClip([cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames], fps=30)
+    video = ImageSequenceClip([cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames], fps=30)
     video.write_videofile(output_video, codec='libx264')
     add_title_image(video_path=output_video)
 
@@ -725,6 +191,406 @@ def create_zoom_video(image_path, points, zoom_level, output_video):
 @app.route('/video/<filename>')
 def video(filename):
     return send_from_directory(VIDEO_FOLDER, filename)
+#-------------------------
 
+# Path to the uploads and output folders
+UPLOAD_FOLDER = 'static/uploads/'
+OUTPUT_FOLDER = 'static/uploads/'
+
+@app.route('/video_edit')
+def video_edit():
+    return render_template('video_edit.html')
+
+@app.route('/trim-video', methods=['POST'])
+def trim_video():
+    start_time = float(request.form['startTime'])
+    end_time = float(request.form['endTime'])
+    input_video = 'static/use.mp4'
+    output_video = 'static/bash_vids/trimmed_video.mp4'
+
+    try:
+        # Log the trimming process
+        ic(f"Trimming video from {start_time} to {end_time}")
+         
+        # Use MoviePy to trim the video
+        ffmpeg_extract_subclip(input_video, start_time, end_time, targetname=output_video)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        print(f"Error trimming video: {str(e)}")
+        return f"Error: {str(e)}", 500
+@app.route('/reverse_video', methods=['POST', 'GET'])
+def reverse_video():
+    try:
+        # Define paths
+        input_video = 'static/video_resources/forward.mp4'
+        temp_dir = 'static/temp/'
+        final_output_dir = 'static/video_history/'
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(final_output_dir, exist_ok=True)
+
+        # Step 1: Slow down the input video
+        slow_video = os.path.join(temp_dir, 'slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', input_video,
+            '-filter:v', 'scale=512x768,setpts=2.0*PTS',
+            '-an', '-y', slow_video
+        ], check=True)
+
+        # Step 2: Reverse the slowed video
+        reverse_slow_video = os.path.join(temp_dir, 'reverse_slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', slow_video,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', reverse_slow_video
+        ], check=True)
+
+        # Step 3: Concatenate slow and reverse videos
+        joined = os.path.join(temp_dir, 'joined.mp4')
+        with open(os.path.join(temp_dir, 'file_list1.txt'), 'w') as f:
+            f.write(f"file '{slow_video[12:]}'\nfile '{reverse_slow_video[12:]}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list1.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', joined
+        ], check=True)
+
+        # Step 4: Reverse the concatenated video
+        joined_reverse = os.path.join(temp_dir, 'joined_reverse.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', joined,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', joined_reverse
+        ], check=True)
+
+        # Step 5: Concatenate joined and reversed joined videos
+        final = os.path.join(temp_dir, 'final.mp4')
+        with open(os.path.join(temp_dir, 'file_list2.txt'), 'w') as f:
+            f.write(f"file '{joined[12:]}'\nfile '{joined_reverse[12:]}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list2.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', final
+        ], check=True)
+
+        # Step 6: Add a border overlay
+        border_image = 'static/assets/512x768.png'
+        final_with_border = os.path.join(temp_dir, 'final_with_border.mp4')
+        if os.path.exists(border_image):
+            subprocess.run([
+                'ffmpeg', '-hide_banner', '-i', final, '-i', border_image,
+                '-filter_complex', "[1:v]scale=iw:ih[border];[0:v][border]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto",
+                '-c:a', 'copy', '-y', final_with_border
+            ], check=True)
+        else:
+            raise FileNotFoundError(f"Border file '{border_image}' not found!")
+
+        # Step 7: Add background music to the video with no sound
+        music_files = [os.path.join('static/music/', f) for f in os.listdir('static/music/') if f.endswith('.mp3')]
+        if not music_files:
+            raise FileNotFoundError("No background music files found in the specified directory!")
+        music_file = random.choice(music_files)
+        final_temp = os.path.join(temp_dir, 'FINAL_TEMP.mp4')
+
+        # Add background music to the video (no existing audio in the video)
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_with_border, '-i', music_file,
+            '-filter_complex', "[1:a]volume=0.5[a1]",  # Adjust volume of the music
+            '-map', '0:v', '-map', '[a1]', '-shortest', '-c:v', 'copy', '-y', final_temp
+        ], check=True)
+
+
+        # Step 8: Save the final video with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        final_filename = os.path.join(final_output_dir, f'{timestamp}_FINAL.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_temp,
+            '-g', '48', '-keyint_min', '48', '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', final_filename
+        ], check=True)
+
+        # Cleanup intermediate files
+        intermediate_files = [slow_video, reverse_slow_video, joined, joined_reverse, final, final_with_border, final_temp]
+        for file in intermediate_files:
+            if os.path.exists(file):
+                os.remove(file)
+        src =final_filename
+        dest ='static/use.mp4'
+        shutil.copy(src, dest)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+@app.route('/reverse_videom', methods=['POST', 'GET'])
+def reverse_videom():
+    try:
+        # Define paths
+        input_video = 'static/video_resources/forward.mp4'
+        temp_dir = 'static/temp/'
+        final_output_dir = 'static/video_history/'
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(final_output_dir, exist_ok=True)
+
+        # Step 1: Slow down the input video
+        slow_video = os.path.join(temp_dir, 'slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', input_video,
+            '-filter:v', 'scale=512x820,setpts=2.0*PTS',
+            '-an', '-y', slow_video
+        ], check=True)
+
+        # Step 2: Reverse the slowed video
+        reverse_slow_video = os.path.join(temp_dir, 'reverse_slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', slow_video,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', reverse_slow_video
+        ], check=True)
+
+        # Step 3: Concatenate slow and reverse videos
+        joined = os.path.join(temp_dir, 'joined.mp4')
+        with open(os.path.join(temp_dir, 'file_list1.txt'), 'w') as f:
+            f.write(f"file '{slow_video}'\nfile '{reverse_slow_video}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list1.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', joined
+        ], check=True)
+
+        # Step 4: Reverse the concatenated video
+        joined_reverse = os.path.join(temp_dir, 'joined_reverse.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', joined,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', joined_reverse
+        ], check=True)
+
+        # Step 5: Concatenate joined and reversed joined videos
+        final = os.path.join(temp_dir, 'final.mp4')
+        with open(os.path.join(temp_dir, 'file_list2.txt'), 'w') as f:
+            f.write(f"file '{joined}'\nfile '{joined_reverse}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list2.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', final
+        ], check=True)
+
+        # Step 6: Add a border overlay
+        border_image = 'static/assets/512x820.png'
+        final_with_border = os.path.join(temp_dir, 'final_with_border.mp4')
+        if os.path.exists(border_image):
+            subprocess.run([
+                'ffmpeg', '-hide_banner', '-i', final, '-i', border_image,
+                '-filter_complex', "[1:v]scale=iw:ih[border];[0:v][border]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto",
+                '-c:a', 'copy', '-y', final_with_border
+            ], check=True)
+        else:
+            raise FileNotFoundError(f"Border file '{border_image}' not found!")
+
+        # Step 7: Add background music to the video with no sound
+        music_files = [os.path.join('static/music/', f) for f in os.listdir('static/music/') if f.endswith('.mp3')]
+        if not music_files:
+            raise FileNotFoundError("No background music files found in the specified directory!")
+        music_file = random.choice(music_files)
+        final_temp = os.path.join(temp_dir, 'FINAL_TEMP.mp4')
+
+        # Add background music to the video (no existing audio in the video)
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_with_border, '-i', music_file,
+            '-filter_complex', "[1:a]volume=0.7[a1]",  # Adjust volume of the music
+            '-map', '0:v', '-map', '[a1]', '-shortest', '-c:v', 'copy', '-y', final_temp
+        ], check=True)
+
+
+        # Step 8: Save the final video with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        final_filename = os.path.join(final_output_dir, f'{timestamp}_FINAL.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_temp,
+            '-g', '48', '-keyint_min', '48', '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', final_filename
+        ], check=True)
+
+        # Cleanup intermediate files
+        intermediate_files = [slow_video, reverse_slow_video, joined, joined_reverse, final, final_with_border, final_temp]
+        for file in intermediate_files:
+            if os.path.exists(file):
+                os.remove(file)
+        src =final_filename
+        dest ='static/use.mp4'
+        shutil.copy(src, dest)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+
+
+@app.route('/reverse_videos', methods=['POST', 'GET'])
+def reverse_videos():
+    try:
+        # Define paths
+        input_video = 'static/video_resources/forward.mp4'
+        temp_dir = 'static/temp/'
+        final_output_dir = 'static/video_history/'
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(final_output_dir, exist_ok=True)
+
+        # Step 1: Slow down the input video
+        slow_video = os.path.join(temp_dir, 'slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', input_video,
+            '-filter:v', 'scale=512x700,setpts=2.0*PTS',
+            '-an', '-y', slow_video
+        ], check=True)
+
+        # Step 2: Reverse the slowed video
+        reverse_slow_video = os.path.join(temp_dir, 'reverse_slow_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', slow_video,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', reverse_slow_video
+        ], check=True)
+
+        # Step 3: Concatenate slow and reverse videos
+        joined = os.path.join(temp_dir, 'joined.mp4')
+        with open(os.path.join(temp_dir, 'file_list1.txt'), 'w') as f:
+            f.write(f"file '{slow_video}'\nfile '{reverse_slow_video}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list1.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', joined
+        ], check=True)
+
+        # Step 4: Reverse the concatenated video
+        joined_reverse = os.path.join(temp_dir, 'joined_reverse.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', joined,
+            '-vf', 'reverse', '-af', 'areverse',
+            '-y', joined_reverse
+        ], check=True)
+
+        # Step 5: Concatenate joined and reversed joined videos
+        final = os.path.join(temp_dir, 'final.mp4')
+        with open(os.path.join(temp_dir, 'file_list2.txt'), 'w') as f:
+            f.write(f"file '{joined}'\nfile '{joined_reverse}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', os.path.join(temp_dir, 'file_list2.txt'),
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+            '-y', final
+        ], check=True)
+
+        # Step 6: Add a border overlay
+        border_image = 'static/assets/512x700.png'
+        final_with_border = os.path.join(temp_dir, 'final_with_border.mp4')
+        if os.path.exists(border_image):
+            subprocess.run([
+                'ffmpeg', '-hide_banner', '-i', final, '-i', border_image,
+                '-filter_complex', "[1:v]scale=iw:ih[border];[0:v][border]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto",
+                '-c:a', 'copy', '-y', final_with_border
+            ], check=True)
+        else:
+            raise FileNotFoundError(f"Border file '{border_image}' not found!")
+
+        # Step 7: Add background music to the video with no sound
+        music_files = [os.path.join('static/music/', f) for f in os.listdir('static/music/') if f.endswith('.mp3')]
+        if not music_files:
+            raise FileNotFoundError("No background music files found in the specified directory!")
+        music_file = random.choice(music_files)
+        final_temp = os.path.join(temp_dir, 'FINAL_TEMP.mp4')
+
+        # Add background music to the video (no existing audio in the video)
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_with_border, '-i', music_file,
+            '-filter_complex', "[1:a]volume=0.7[a1]",  # Adjust volume of the music
+            '-map', '0:v', '-map', '[a1]', '-shortest', '-c:v', 'copy', '-y', final_temp
+        ], check=True)
+
+
+        # Step 8: Save the final video with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        final_filename = os.path.join(final_output_dir, f'{timestamp}_FINAL.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_temp,
+            '-g', '48', '-keyint_min', '48', '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', final_filename
+        ], check=True)
+
+        # Cleanup intermediate files
+        intermediate_files = [slow_video, reverse_slow_video, joined, joined_reverse, final, final_with_border, final_temp]
+        for file in intermediate_files:
+            if os.path.exists(file):
+                os.remove(file)
+        src =final_filename
+        dest ='static/use.mp4'
+        shutil.copy(src, dest)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+
+@app.route('/upload_mp4_video')
+def upload_mp4_video():
+    return render_template('upload_mp4.html')
+@app.route('/upload_mp4', methods=['POST'])
+def upload_mp4():
+    uploaded_file = request.files['videoFile']
+    if uploaded_file.filename != '':
+        # Save the uploaded file to a directory or process it as needed
+        # For example, you can save it to a specific directory:
+        uploaded_file.save('static/video_resources/forward.mp4')
+        #                   /' + uploaded_file.filename)
+        VIDEO='static/video_resources/forward.mp4'
+        #use a uuid and copy 'to static/video_history'
+        shutil.copy('static/video_resources/forward.mp4', 'static/video_history/' + str(uuid.uuid4()) + '.mp4')
+        return render_template('upload_mp4.html',VIDEO=VIDEO)
+    else:
+        VIDEO='static/video_resources/forward.mp4'
+        return render_template('upload_mp4.html',VIDEO=VIDEO)
+@app.route('/get_videos', methods=['GET', 'POST'])
+def get_videos():
+    video_files = glob.glob("static/video_history/*.mp4")
+    video_files = sorted(video_files, key=os.path.getmtime, reverse=True)
+    return render_template("get_videos.html", video_files=video_files)
+
+@app.route('/delete_videos', methods=['POST'])
+def delete_videos():
+    videos_to_delete = request.form.getlist('videos_to_delete')  # Get selected videos
+
+    if not videos_to_delete:
+        flash("No videos selected for deletion.", "warning")
+        return redirect(url_for('get_videos'))
+
+    for video_path in videos_to_delete:
+        try:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+                print(f"Deleted: {video_path}")  # Debugging log
+            else:
+                print(f"File not found: {video_path}")
+        except Exception as e:
+            print(f"Error deleting {video_path}: {str(e)}")
+
+    flash(f"Deleted {len(videos_to_delete)} video(s).", "success")
+    return redirect(url_for('get_videos'))   
+
+# Define path for videos and temp export
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
