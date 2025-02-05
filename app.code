@@ -448,7 +448,7 @@ def create_rectangle_mask():
 
 
 
-    #return send_file(mask_path, as_attachment=True)
+#return send_file(mask_path, as_attachment=True)
 def save_text_to_file(filename, text):
     try:
         with open(os.path.join(TEXT_FILES_DIR, filename), "w") as file:

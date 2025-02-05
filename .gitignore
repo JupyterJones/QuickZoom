@@ -1,2 +1,6 @@
 env/*
 env/
+static/TEXT/jen_and_I_chat.txt
+static/fix_errors/test.mp4
+env/lib/python3.9/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2
+env/lib/python3.9/site-packages/cv2/cv2.abi3.so

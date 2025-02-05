@@ -21,10 +21,17 @@ import subprocess
 import json
 import datetime
 from icecream import ic
+import re
+import gc
 
 app = Flask(__name__)
+# Set custom GC thresholds
+gc.set_threshold(500, 8, 8)
+
+
 UPLOAD_FOLDER = 'static/upload/'
 VIDEO_FOLDER = 'static/videos/'
+TEXT_FILES_DIR = 'static/TEXT/'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 os.makedirs('static/vids', exist_ok=True)
@@ -124,6 +131,11 @@ def add_title_image(video_path, hex_color = "#A52A2A"):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+# Route to work with text
+@app.route('/index2')
+def index2():
+    return render_template('index2.html')    
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -327,6 +339,7 @@ def reverse_video():
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
+
 @app.route('/reverse_videom', methods=['POST', 'GET'])
 def reverse_videom():
     try:
@@ -356,7 +369,7 @@ def reverse_videom():
         # Step 3: Concatenate slow and reverse videos
         joined = os.path.join(temp_dir, 'joined.mp4')
         with open(os.path.join(temp_dir, 'file_list1.txt'), 'w') as f:
-            f.write(f"file '{slow_video}'\nfile '{reverse_slow_video}'\n")
+            f.write(f"file '{slow_video[12:]}'\nfile '{reverse_slow_video[12:]}'\n")
         subprocess.run([
             'ffmpeg', '-f', 'concat', '-safe', '0',
             '-i', os.path.join(temp_dir, 'file_list1.txt'),
@@ -376,7 +389,7 @@ def reverse_videom():
         # Step 5: Concatenate joined and reversed joined videos
         final = os.path.join(temp_dir, 'final.mp4')
         with open(os.path.join(temp_dir, 'file_list2.txt'), 'w') as f:
-            f.write(f"file '{joined}'\nfile '{joined_reverse}'\n")
+            f.write(f"file '{joined[12:]}'\nfile '{joined_reverse[12:]}'\n")
         subprocess.run([
             'ffmpeg', '-f', 'concat', '-safe', '0',
             '-i', os.path.join(temp_dir, 'file_list2.txt'),
@@ -590,7 +603,337 @@ def delete_videos():
 
     flash(f"Deleted {len(videos_to_delete)} video(s).", "success")
     return redirect(url_for('get_videos'))   
+#---------------------------------------
 
+# sanitize filename
+def sanitize_filename(filename):
+    """Removes special characters from a filename, keeping only alphanumeric characters, underscores, and extensions."""
+    filename = filename.strip().replace(" ", "_")  # Replace spaces with underscores
+    filename = re.sub(r"[^\w\-.]", "", filename)  # Keep only letters, numbers, underscore, dot, and hyphen
+    return filename
+#create a text file
+@app.route('/create_text_file', methods=['GET', 'POST'])
+def create_text_file():
+    if request.method == 'POST':
+        print("Received request to create a text file.")
+        # Get the text content from the textarea
+        text_content = request.form.get('textarea_content')
+        print(f"Text content for file: {text_content}")
+
+        #use first 20 letters of text content
+        text_file_name = text_content[:20]
+        filename = text_file_name
+        file_name=sanitize_filename(filename)+'.txt'
+        # Create the file path
+        text_file_path = os.path.join('static/TEXT', file_name)
+
+        # Write the text content to the file
+        with open(text_file_path, 'w') as file:
+            file.write(text_content)
+        print(f"Text file created at {text_file_path}")
+
+        return render_template('text_file_created.html', text_file_path=text_file_path, text_content=text_content)
+
+    return render_template('create_text_file.html')
+
+
+
+def save_text_to_file(filename, text):
+    try:
+        with open(os.path.join(TEXT_FILES_DIR, filename), "w") as file:
+            file.write(text)
+    except Exception as e:
+        print(f"An error occurred while saving file '{filename}': {e}")
+
+UPLOAD_FOLDER = 'static/TEXT'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+@app.route('/read_text_file/<filename>')
+def read_text_file(filename):
+    # Ensure the filename is safe
+    safe_filename = os.path.basename(filename)  # Prevent directory traversal
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_filename)
+
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        return render_template("TEXT.html", text=text, filename=safe_filename)
+    else:
+        return "File not found", 404
+
+# list and read a directory of text files in static/TEXT
+@app.route('/list_text_files')
+def list_text_files():
+    text_files = os.listdir(TEXT_FILES_DIR)
+    return render_template('list_text_files.html', text_files=text_files)
 # Define path for videos and temp export
+
+#---------------------------------------
+
+# Temporary directory to store uploaded files
+UPLOAD_FOLDER = "static/uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Function to generate the infinite zoom effect
+def generate_infinite_zoom(image1_path, image2_path, output_path, zoom_speed=0.05, duration=4, fps=30):
+    img1 = cv2.imread(image1_path)
+    img2 = cv2.imread(image2_path)
+    h, w = img1.shape[:2]
+
+    frames = []
+    total_frames = int(duration * fps)
+
+    # Zoom in phase
+    for i in range(total_frames // 2):
+        zoom_factor = 1 + zoom_speed * i
+        frame = zoom_image(img1, zoom_factor)
+        frames.append(frame)
+
+    # Transition phase
+    frames.append(zoom_image(img2, zoom_factor))  # Switch to second image
+
+    # Zoom out phase
+    for i in range(total_frames // 2, 0, -1):
+        zoom_factor = 1 + zoom_speed * i
+        frame = zoom_image(img2, zoom_factor)
+        frames.append(frame)
+
+    frames_rgb = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in frames]
+    clip = ImageSequenceClip(frames_rgb, fps=fps)
+    clip.write_videofile(output_path, codec="libx264")
+
+# Helper function to zoom into an image
+def zoom_image(image, zoom_factor):
+    h, w = image.shape[:2]
+    new_h, new_w = int(h / zoom_factor), int(w / zoom_factor)
+    top = (h - new_h) // 2
+    left = (w - new_w) // 2
+    cropped = image[top:top+new_h, left:left+new_w]
+    resized = cv2.resize(cropped, (w, h))
+    return resized
+
+# Function to generate the pixel sorting transition
+def generate_pixel_sorting(image1_path, image2_path, output_path, duration=5, fps=30):
+    img1 = cv2.imread(image1_path)
+    img2 = cv2.imread(image2_path)
+    h, w = img1.shape[:2]
+
+    frames = []
+    total_frames = int(duration * fps)
+
+    for i in range(total_frames):
+        # Create a copy of the first image
+        frame = img1.copy()
+
+        # Sort pixels horizontally based on brightness
+        progress = i / total_frames
+        sorted_rows = int(h * progress)
+        for row in range(sorted_rows):
+            frame[row] = frame[row][frame[row][:, 0].argsort()]
+
+        # Blend with the second image
+        alpha = progress
+        blended_frame = cv2.addWeighted(frame, 1 - alpha, img2, alpha, 0)
+        frames.append(blended_frame)
+
+    frames_rgb = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in frames]
+    clip = ImageSequenceClip(frames_rgb, fps=fps)
+    clip.write_videofile(output_path, codec="libx264")
+
+# Route to render the HTML form
+@app.route("/zoom_effect", methods=["GET", "POST"])
+def zoom_effect():
+    video_path = None
+    if request.method == "POST":
+        if "image1" not in request.files or "image2" not in request.files:
+            return "Both image1 and image2 must be provided", 400
+
+        image1 = request.files["image1"]
+        image2 = request.files["image2"]
+
+        # Save images to the upload folder
+        image1_path = os.path.join(UPLOAD_FOLDER, image1.filename)
+        image2_path = os.path.join(UPLOAD_FOLDER, image2.filename)
+        image1.save(image1_path)
+        image2.save(image2_path)
+
+        # Get parameters from the form
+        transition_style = request.form.get("transition_style")
+        duration = int(request.form.get("duration", 5))
+        fps = int(request.form.get("fps", 30))
+
+        # Generate the video
+        output_path = os.path.join(UPLOAD_FOLDER, "output.mp4")
+        if transition_style == "infinite_zoom":
+            generate_infinite_zoom(image1_path, image2_path, output_path, duration=duration, fps=fps)
+        elif transition_style == "pixel_sorting":
+            generate_pixel_sorting(image1_path, image2_path, output_path, duration=duration, fps=fps)
+
+        # Pass the video path to the template
+        video_path = output_path
+
+    return render_template("zoom_effect.html", video=video_path)
+
+# Route to download the generated video
+@app.route("/download/<filename>", methods=["GET"])
+def download_video(filename):
+    video_path = os.path.join(UPLOAD_FOLDER, filename)
+    if not os.path.exists(video_path):
+        return "File not found", 404
+    return send_file(video_path, as_attachment=True)
+@app.route('/speed_up', methods=['POST', 'GET'])
+def speed_up():
+    try:
+        # Define paths
+        input_video = 'static/video_resources/forward.mp4'
+        temp_dir = 'static/temp/'
+        final_output_dir = 'static/video_history/'
+        os.makedirs(temp_dir, exist_ok=True)
+        os.makedirs(final_output_dir, exist_ok=True)
+
+        # Step 1: Slow down the input video
+        speed_video = os.path.join(temp_dir, 'speed_video.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', input_video,
+            '-filter:v', 'scale=512x820,setpts=.5*PTS',
+            '-an', '-y', speed_video
+        ], check=True)
+        # Step 6: Add a border overlay
+        border_image = 'static/assets/512x820.png'
+        final_with_border = os.path.join(temp_dir, 'speed_with_border.mp4')
+        if os.path.exists(border_image):
+            subprocess.run([
+                'ffmpeg', '-hide_banner', '-i', speed_video, '-i', border_image,
+                '-filter_complex', "[1:v]scale=iw:ih[border];[0:v][border]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto",
+                '-c:a', 'copy', '-y', final_with_border
+            ], check=True)
+        else:
+            raise FileNotFoundError(f"Border file '{border_image}' not found!")
+
+        # Step 7: Add background music to the video with no sound
+        music_files = [os.path.join('static/music/', f) for f in os.listdir('static/music/') if f.endswith('.mp3')]
+        if not music_files:
+            raise FileNotFoundError("No background music files found in the specified directory!")
+        music_file = random.choice(music_files)
+        final_temp = os.path.join(temp_dir, 'speed_TEMP.mp4')
+
+        # Add background music to the video (no existing audio in the video)
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_with_border, '-i', music_file,
+            '-filter_complex', "[1:a]volume=0.7[a1]",  # Adjust volume of the music
+            '-map', '0:v', '-map', '[a1]', '-shortest', '-c:v', 'copy', '-y', final_temp
+        ], check=True)
+
+
+        # Step 8: Save the final video with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        final_filename = os.path.join(final_output_dir, f'{timestamp}_FINAL.mp4')
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-i', final_temp,
+            '-g', '48', '-keyint_min', '48', '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-y', final_filename
+        ], check=True)
+
+        '''
+        # Cleanup intermediate files
+        intermediate_files = [speed_video, final_filename, joined, joined_reverse, final, final_with_border, final_temp]
+        for file in intermediate_files:
+            if os.path.exists(file):
+                os.remove(file)
+        '''
+        src =final_filename
+        dest ='static/use.mp4'
+        shutil.copy(src, dest)
+        return redirect(url_for('video_edit'))
+
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+#--
+TEXT_FILES_DIR = "static/TEXT" 
+# Index route to display existing text files and create new ones
+@app.route("/edit_text", methods=["GET", "POST"])
+def edit_text():
+
+    if request.method == "POST":
+        filename = request.form["filename"]
+        text = request.form["text"]
+        save_text_to_file(filename, text)
+        return redirect(url_for("edit_text"))
+    else:
+        # Path to the file containing list of file paths
+        text_files = os.listdir(TEXT_FILES_DIR)
+        text_directory='static/TEXT'
+        files = sorted(text_files, key=lambda x: os.path.getmtime(os.path.join(text_directory, x)), reverse=True)
+        #files=glob.glob('static/TEXT/*.txt')
+        print(f'files 1: {files}')  
+        # Call the function to list files by creation time
+        #files = list_files_by_creation_time(files)
+        print(f'files 2: {files}')
+        return render_template("edit_text.html", files=files)
+ # Route to edit a text file
+@app.route("/edit/<filename>", methods=["GET", "POST"])
+def edit(filename):
+    if request.method == "POST":
+        text = request.form["text"]
+        save_text_to_file(filename, text)
+        return redirect(url_for("index"))
+    else:
+        text = read_text_from_file(filename)
+        return render_template("edit.html", filename=filename, text=text)
+# Route to delete a text file
+@app.route("/delete/<filename>")
+def delete(filename):
+    filepath = os.path.join(TEXT_FILES_DIR, filename)
+    if os.path.exists(filepath):
+        os.remove(filepath)
+        print(f"File deleted: {filename}")
+    return redirect(url_for("index"))
+
+def read_text_from_file(filename):
+    filepath = os.path.join(TEXT_FILES_DIR, filename)
+    with open(filepath, "r") as file:
+        text = file.read()
+        print(f"Text read from file: {filename}")
+        return text
+def list_files_by_creation_time(file_paths):
+    """
+    List files by their creation time, oldest first.
+    
+    Args:
+    file_paths (list): List of file paths.
+    
+    Returns:
+    list: List of file paths sorted by creation time.
+    """
+    # Log the start of the function
+    print('Listing files by creation time...')
+    
+    # Create a dictionary to store file paths and their creation times
+    file_creation_times = {}
+    
+    # Iterate through each file path
+    for file_path in file_paths:
+        # Get the creation time of the file
+        try:
+            creation_time = os.path.getctime(file_path)
+            # Store the file path and its creation time in the dictionary
+            file_creation_times[file_path] = creation_time
+        except FileNotFoundError:
+            # Log a warning if the file is not found
+            print(f'File not found: {file_path}')
+    
+    # Sort the dictionary by creation time
+    sorted_files = sorted(file_creation_times.items(), key=lambda x: x[1],reverse=True)
+    
+    # Extract the file paths from the sorted list
+    sorted_file_paths = [file_path for file_path, _ in sorted_files]
+    
+    # Log the end of the function
+    print('File listing complete.')
+    
+    # Return the sorted file paths
+    return sorted_file_paths     
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
